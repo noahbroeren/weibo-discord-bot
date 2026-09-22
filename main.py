@@ -397,32 +397,51 @@ def main():
     known_products = load_json(PRODUCTS_FILE, [])
     last_id = state.get("last_id")
 
+    # FORCE_LATEST=n plaatst de n nieuwste posts ongeacht de state.
+    # Handig om te testen zonder handmatig state.json aan te passen.
+    try:
+        force_latest = int(os.environ.get("FORCE_LATEST", "0") or "0")
+    except ValueError:
+        force_latest = 0
+
     warm_up(uid)
     containerid = get_container_id(uid)
     print(f"Containerid: {containerid}")
     posts = get_posts(uid, containerid)
     print(f"{len(posts)} post(s) opgehaald.")
+
+    if not posts:
+        print(
+            "Geen posts gevonden. Weibo gaf wel antwoord, maar zonder bruikbare "
+            "posts. Mogelijk klopt het uid of de containerid niet, of levert "
+            "Weibo pas posts na inloggen (zie README: 'Als Weibo blokkeert')."
+        )
+        return
+
     posts.sort(key=lambda p: int(p["id"]))  # oudste eerst
 
-    # Eerste run: niks terugposten, alleen het startpunt vastleggen, anders
-    # dumpt de bot in één keer de hele recente historie in het kanaal.
-    if last_id is None:
-        if posts:
-            state["last_id"] = posts[-1]["id"]
-            save_json(STATE_FILE, state)
-            print(f"Eerste run: startpunt gezet op post {posts[-1]['id']}. "
-                  "Vanaf nu worden alleen nieuwe posts geplaatst.")
-        else:
-            print("Eerste run: geen posts gevonden.")
+    if force_latest > 0:
+        selection = posts[-force_latest:]
+        print(f"FORCE_LATEST={force_latest}: {len(selection)} post(s) worden "
+              "geplaatst ongeacht de opgeslagen state.")
+    elif last_id is None:
+        # Eerste run: niks terugposten, alleen het startpunt vastleggen, anders
+        # dumpt de bot in één keer de hele recente historie in het kanaal.
+        state["last_id"] = posts[-1]["id"]
+        save_json(STATE_FILE, state)
+        print(f"Eerste run: startpunt gezet op post {posts[-1]['id']}. "
+              "Vanaf nu worden alleen nieuwe posts geplaatst.")
         return
+    else:
+        selection = [p for p in posts if int(p["id"]) > int(last_id)]
+        if not selection:
+            print("Geen nieuwe posts sinds de vorige run.")
 
     new_last_id = last_id
     posted = 0
 
-    for post in posts:
+    for post in selection:
         pid = post["id"]
-        if int(pid) <= int(last_id):
-            continue
 
         print(f"Nieuwe post gevonden: {pid}")
         text = clean_text(get_full_text(post))
@@ -443,9 +462,15 @@ def main():
         posted += 1
         time.sleep(2)
 
+    # In force-modus altijd doorschuiven naar de nieuwste post, zodat de
+    # volgende gewone run niet alles nogmaals plaatst.
+    if force_latest > 0:
+        new_last_id = posts[-1]["id"]
+
     if new_last_id != last_id:
         state["last_id"] = new_last_id
         save_json(STATE_FILE, state)
+        print(f"State bijgewerkt naar post {new_last_id}.")
 
     print(f"Klaar. {posted} nieuwe post(s) geplaatst.")
 
