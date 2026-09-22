@@ -1,5 +1,16 @@
-[
-  "CANADA GOOSE JACKETS",
-  "MAISON MARGIELA LOVED TO DEATH SHOES",
-  "718 MADE HEAVYWEIGHT SWEATSHIRT"
-]
+{
+  "products": [
+    {
+      "title": "BALENCIAGA HEAVYWEIGHT SWEATSHIRT",
+      "hints": "1300g heavyweight sweatshirt / hoodie, 重磅卫衣, grey and washed versions, oversized boxy fit, described as their breakout bestseller, restocked yearly"
+    },
+    {
+      "title": "CANADA GOOSE JACKETS",
+      "hints": "down jackets, 羽绒服, baffled stitch, coyote fur collar (郊狼毛领), Aviator / 飞行员 01 model, black and grey, 80 white duck down fill with traceability tag, arm badge"
+    },
+    {
+      "title": "MAISON MARGIELA LOVED TO DEATH SHOES",
+      "hints": "heavily distressed canvas high-top sneakers, painted and worn-down finish, red and black colourway, four moulds per pair, Maggie La / 马吉拉"
+    }
+  ]
+}
