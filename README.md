@@ -91,3 +91,28 @@ model. Wil je betere productherkenning, kies dan een groter model.
 - Video's boven 50MB worden niet geupload; in plaats daarvan komt er een link
   naar de originele Weibo-post onder het bericht.
 - Berichten boven 2000 tekens worden afgekapt (Discord-limiet).
+
+## Als Weibo blokkeert
+
+Foutmelding in het Actions-log zoals `Kon geen geldige JSON van Weibo krijgen`
+of `JSONDecodeError`? Dan stuurde Weibo geen JSON maar een blokkade- of
+loginpagina terug. Het script print nu wat er precies terugkwam, dus kijk eerst
+in het log naar de regel die begint met "poging 1/3".
+
+Meest voorkomende oorzaak: Weibo blokkeert het datacenter-IP van de GitHub
+Actions runner. Oplossing: geef de bot een ingelogde sessie mee via een cookie.
+
+1. Log op je eigen computer in op m.weibo.cn in de browser.
+2. Open de developer tools (F12) -> tabblad Network.
+3. Ververs de pagina, klik op het eerste verzoek naar m.weibo.cn.
+4. Zoek bij Request Headers de regel `Cookie:` en kopieer de hele waarde
+   erachter (dat is een lange tekst met SUB=..., SUBP=... erin).
+5. Zet die tekst als repository secret met de naam `WEIBO_COOKIE`.
+
+De workflow pikt die secret automatisch op. Let op: zo'n cookie verloopt na
+verloop van tijd (meestal weken tot maanden), dus als de bot ooit opnieuw stopt
+met werken is dit het eerste om te vernieuwen.
+
+Werkt ook dat niet, dan blokkeert Weibo de runner-IP's hardnekkig. In dat geval
+is de bot beter af op een eigen VPS of op een machine die altijd aanstaat, want
+die heeft een gewoon consumenten-IP.

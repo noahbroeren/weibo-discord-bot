@@ -51,11 +51,90 @@ WEIBO_HEADERS = {
         "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 "
         "Safari/604.1"
     ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "X-Requested-With": "XMLHttpRequest",
+    "MWeibo-Pwa": "1",
     "Referer": "https://m.weibo.cn/",
 }
 
 session = requests.Session()
 session.headers.update(WEIBO_HEADERS)
+
+# Optioneel: als Weibo vanaf GitHub's IP's een ingelogde sessie eist, kun je
+# de cookie-string uit je eigen browser in de WEIBO_COOKIE secret zetten.
+_cookie = os.environ.get("WEIBO_COOKIE", "").strip()
+if _cookie:
+    session.headers["Cookie"] = _cookie
+
+
+def warm_up(uid: str):
+    """
+    Weibo geeft de API-endpoints pas bruikbare JSON als de sessie cookies
+    heeft. Eerst de gewone profielpagina ophalen levert die cookies op.
+    """
+    try:
+        session.get(
+            f"https://m.weibo.cn/u/{uid}",
+            headers={"Accept": "text/html,application/xhtml+xml", "Referer": "https://m.weibo.cn/"},
+            timeout=20,
+        )
+        session.headers["Referer"] = f"https://m.weibo.cn/u/{uid}"
+        names = ", ".join(session.cookies.keys()) or "(geen)"
+        print(f"Warm-up klaar. Cookies ontvangen: {names}")
+    except requests.RequestException as e:
+        print(f"Warm-up mislukt ({e}); we proberen het alsnog.")
+
+
+def weibo_api(params: dict, attempts: int = 3):
+    """
+    Roept de Weibo container-API aan en geeft de JSON terug. Bij een
+    niet-JSON antwoord (blokkade, loginpagina, rate limit) print het script
+    wat er precies terugkwam, zodat het probleem zichtbaar is in het log.
+    """
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            r = session.get(
+                "https://m.weibo.cn/api/container/getIndex",
+                params=params,
+                timeout=25,
+            )
+        except requests.RequestException as e:
+            last_error = f"netwerkfout: {e}"
+            print(f"  poging {attempt}/{attempts} mislukt ({last_error})")
+            time.sleep(attempt * 3)
+            continue
+
+        ctype = r.headers.get("Content-Type", "")
+        try:
+            data = r.json()
+        except ValueError:
+            snippet = r.text[:300].replace("\n", " ")
+            last_error = (
+                f"HTTP {r.status_code}, content-type '{ctype}'. "
+                f"Antwoord begon met: {snippet!r}"
+            )
+            print(f"  poging {attempt}/{attempts}: geen JSON terug. {last_error}")
+            time.sleep(attempt * 3)
+            continue
+
+        # Weibo geeft soms wel JSON, maar met een foutcode erin.
+        if data.get("ok") == 0:
+            last_error = f"Weibo gaf ok=0 terug: {data.get('msg')!r}"
+            print(f"  poging {attempt}/{attempts}: {last_error}")
+            time.sleep(attempt * 3)
+            continue
+
+        return data
+
+    raise RuntimeError(
+        "Kon geen geldige JSON van Weibo krijgen na meerdere pogingen.\n"
+        f"Laatste probleem: {last_error}\n"
+        "Meest waarschijnlijke oorzaak: Weibo blokkeert het IP van de "
+        "GitHub Actions runner, of eist een ingelogde sessie. Zie de README "
+        "onder 'Als Weibo blokkeert' voor de cookie-oplossing."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -83,29 +162,24 @@ def save_json(path, data):
 
 def get_container_id(uid: str) -> str:
     """Vind de containerid van de 'Weibo' tab (de eigenlijke post-feed)."""
-    r = session.get(
-        "https://m.weibo.cn/api/container/getIndex",
-        params={"type": "uid", "value": uid},
-        timeout=15,
-    )
-    r.raise_for_status()
-    tabs = r.json().get("data", {}).get("tabsInfo", {}).get("tabs", [])
+    data = weibo_api({"type": "uid", "value": uid})
+    tabs = data.get("data", {}).get("tabsInfo", {}).get("tabs", [])
     for tab in tabs:
         if tab.get("tab_type") == "weibo":
             return tab["containerid"]
     if tabs:
         return tabs[0]["containerid"]
-    raise RuntimeError("Kon geen containerid vinden voor dit account")
+    # Fallback: de containerid voor de post-feed is normaal gesproken
+    # voorspelbaar op te bouwen uit het uid.
+    print("Geen tabsInfo gevonden; val terug op de standaard containerid-opbouw.")
+    return f"107603{uid}"
 
 
 def get_posts(uid: str, containerid: str, page: int = 1):
-    r = session.get(
-        "https://m.weibo.cn/api/container/getIndex",
-        params={"type": "uid", "value": uid, "containerid": containerid, "page": page},
-        timeout=15,
+    data = weibo_api(
+        {"type": "uid", "value": uid, "containerid": containerid, "page": page}
     )
-    r.raise_for_status()
-    cards = r.json().get("data", {}).get("cards", [])
+    cards = data.get("data", {}).get("cards", [])
     return [c["mblog"] for c in cards if c.get("card_type") == 9 and "mblog" in c]
 
 
@@ -323,8 +397,11 @@ def main():
     known_products = load_json(PRODUCTS_FILE, [])
     last_id = state.get("last_id")
 
+    warm_up(uid)
     containerid = get_container_id(uid)
+    print(f"Containerid: {containerid}")
     posts = get_posts(uid, containerid)
+    print(f"{len(posts)} post(s) opgehaald.")
     posts.sort(key=lambda p: int(p["id"]))  # oudste eerst
 
     # Eerste run: niks terugposten, alleen het startpunt vastleggen, anders
