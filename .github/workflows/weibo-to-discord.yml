@@ -5,7 +5,14 @@ on:
     # Elke 10 minuten. GitHub kan dit bij drukte iets vertragen,
     # maar dit is de praktische ondergrens voor gratis Actions-cron.
     - cron: "*/10 * * * *"
-  workflow_dispatch: {}   # handmatig te starten via de Actions-tab
+  workflow_dispatch:
+    inputs:
+      force_latest:
+        description: "Plaats de X nieuwste posts sowieso (0 = normaal gedrag)"
+        required: false
+        default: "0"
+        type: choice
+        options: ["0", "1", "2", "3", "5"]
 
 permissions:
   contents: write   # nodig om state.json / products.json terug te committen
@@ -34,6 +41,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Alleen nodig als Weibo het runner-IP blokkeert; zie README
           WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          # Wordt gevuld door de keuzelijst bij een handmatige run
+          FORCE_LATEST: ${{ inputs.force_latest }}
           # Optioneel: ander model kiezen zonder de code aan te passen
           # ANTHROPIC_MODEL: "claude-sonnet-5"
         run: python main.py
