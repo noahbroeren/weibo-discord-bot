@@ -45,7 +45,7 @@ jobs:
           FORCE_LATEST: ${{ inputs.force_latest }}
           # Optioneel: ander model kiezen zonder de code aan te passen
           # ANTHROPIC_MODEL: "claude-sonnet-5"
-        run: python main.py
+                run: python -u main.py
 
       - name: Commit updated state
         run: |
