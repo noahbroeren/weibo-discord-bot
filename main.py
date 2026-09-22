@@ -156,6 +156,34 @@ def save_json(path, data):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+def load_products():
+    """
+    Leest products.json. Ondersteunt twee vormen:
+      - oude vorm: ["TITEL A", "TITEL B"]
+      - nieuwe vorm: {"products": [{"title": "...", "hints": "..."}]}
+    Geeft altijd een lijst met dicts terug.
+    """
+    raw = load_json(PRODUCTS_FILE, None)
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        raw = raw.get("products", [])
+    entries = []
+    for item in raw:
+        if isinstance(item, str):
+            entries.append({"title": item, "hints": ""})
+        elif isinstance(item, dict) and item.get("title"):
+            entries.append({
+                "title": item["title"],
+                "hints": item.get("hints", "") or "",
+            })
+    return entries
+
+
+def save_products(entries):
+    save_json(PRODUCTS_FILE, {"products": entries})
+
+
 # ---------------------------------------------------------------------------
 # Weibo ophalen
 # ---------------------------------------------------------------------------
@@ -264,6 +292,29 @@ def download(url: str):
     return None
 
 
+
+EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"  # pictogrammen, emoticons, symbolen
+    "\U00002600-\U000027BF"  # diverse symbolen en dingbats
+    "\U00002190-\U000021FF"  # pijlen
+    "\U00002B00-\U00002BFF"  # extra symbolen
+    "\U0000FE00-\U0000FE0F"  # variation selectors
+    "\U0001F1E6-\U0001F1FF"  # vlaggen
+    "\U00002B50\U00002705\U0000274C\U0000203C\U00002049"
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def strip_emoji(text: str) -> str:
+    """Vangnet: haalt emoji weg, ook als het model er toch een laat staan."""
+    cleaned = EMOJI_PATTERN.sub("", text)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" +\n", "\n", cleaned)
+    return cleaned.strip()
+
+
 # ---------------------------------------------------------------------------
 # Claude: vertalen + product bepalen in één call
 # ---------------------------------------------------------------------------
@@ -282,22 +333,38 @@ def prepare_image_for_api(image_bytes: bytes):
 
 
 def build_prompt(chinese_text: str, known_products) -> str:
-    known_list = "\n".join(f"- {p}" for p in known_products) if known_products else "(none yet)"
-    return f"""You are helping run the Discord announcements channel for a brand called 718 Made, which posts manufacturing progress updates about the garments and footwear it produces.
+    if known_products:
+        lines = []
+        for p in known_products:
+            if p.get("hints"):
+                lines.append(f"- {p['title']}  |  recognise by: {p['hints']}")
+            else:
+                lines.append(f"- {p['title']}")
+        catalogue = "\n".join(lines)
+    else:
+        catalogue = "(none yet)"
+
+    return f"""You are helping run the Discord announcements channel for 718 Made, a workshop that reproduces garments and footwear from well-known fashion brands. Their Weibo posts are manufacturing progress updates.
 
 You will be given the original Chinese text of a Weibo post, and usually some photos from that post.
 
 Do two things:
 
-1. TRANSLATE the Chinese text into natural, polished English. Fix awkward grammar and phrasing so it reads fluently as a brand social media post. Keep the meaning faithful — do not invent details that are not in the original. Keep relevant emoji. Remove any "read more" artifacts, @mentions of other Weibo accounts, and promotional hashtag spam.
+1. TRANSLATE the Chinese text into natural, polished English. Fix awkward grammar and phrasing so it reads fluently as a brand social media post. Keep the meaning faithful - do not invent details that are not in the original. Remove ALL emoji - the final text must contain no emoji at all, even if the original post is full of them. Also remove "read more" artifacts, @mentions of other Weibo accounts, and hashtag spam.
 
-2. IDENTIFY the product this post is about, and give it a short title in ALL CAPS. Use the text and the photos together. The title should be the brand plus the product type, for example "CANADA GOOSE JACKETS" or "MAISON MARGIELA LOVED TO DEATH SHOES".
+2. IDENTIFY the product and give it a short ALL CAPS title, normally "BRAND + PRODUCT TYPE", for example "CANADA GOOSE JACKETS" or "MAISON MARGIELA LOVED TO DEATH SHOES".
 
-Here are titles already used for previous posts. If this post is about one of these same products, reuse the EXACT same title so the channel stays consistent:
-{known_list}
+How to work out the brand:
+- The post often does NOT name the brand. Infer it from distinctive product details in the text (weights, colour names, model names, construction details, fabric specs) and from the photos (silhouette, logos, labels, hardware, stitching, packaging).
+- Use the product catalogue below. These are products 718 Made has posted about before, with details that identify them. If this post matches one of them, reuse that EXACT title.
+- 718 Made is the workshop, NOT the brand. NEVER use "718 MADE" as the brand name in a product title.
+- If you can identify the product type but genuinely cannot determine the brand, use the product type alone, for example "HEAVYWEIGHT SWEATSHIRT". Do not guess a brand you have no evidence for, and do not fall back to "718 MADE".
+- Only if the post is not about a specific product at all (a general announcement, holiday notice, giveaway with no product) use the title "{FALLBACK_TITLE}".
+
+Product catalogue (previously used titles, with recognition details):
+{catalogue}
 
 If the post is about a genuinely new product, create a new title in the same style.
-If you truly cannot tell what product it is (for example a general announcement, holiday notice, or restock message with no specific product), use the title "{FALLBACK_TITLE}".
 
 Respond with ONLY a JSON object, no markdown fences, no preamble:
 {{"title": "PRODUCT TITLE IN CAPS", "translation": "the translated English text"}}
@@ -355,7 +422,7 @@ def analyse_post(chinese_text: str, image_blobs, known_products):
         parsed = json.loads(raw)
         title = (parsed.get("title") or FALLBACK_TITLE).strip().upper()
         translation = (parsed.get("translation") or "").strip() or chinese_text
-        return title, translation
+        return strip_emoji(title), strip_emoji(translation)
     except Exception as e:
         print(f"  ! Claude-call mislukt ({e}); val terug op ruwe tekst")
         return FALLBACK_TITLE, chinese_text
@@ -383,7 +450,7 @@ def post_to_discord(webhook_url: str, title: str, body: str, image_blobs,
             files_to_send.append(("video.mp4", video_data))
             total_size += len(video_data)
         else:
-            note = f"\n\n🎥 Video: {post_link}"
+            note = f"\n\nVideo: {post_link}"
 
     content = f"**Progress Update | {title}**\n\n{body}{note}"
     # Discord's tekstlimiet is 2000 tekens.
@@ -416,7 +483,7 @@ def main():
     webhook_url = os.environ["DISCORD_WEBHOOK_URL"]
 
     state = load_json(STATE_FILE, {"last_id": None})
-    known_products = load_json(PRODUCTS_FILE, [])
+    known_products = load_products()
     last_id = state.get("last_id")
 
     # FORCE_LATEST=n plaatst de n nieuwste posts ongeacht de state.
@@ -476,9 +543,10 @@ def main():
         link = f"https://m.weibo.cn/status/{pid}"
         post_to_discord(webhook_url, title, translation, image_blobs, video_url, link)
 
-        if title != FALLBACK_TITLE and title not in known_products:
-            known_products.append(title)
-            save_json(PRODUCTS_FILE, known_products)
+        if title != FALLBACK_TITLE and title not in {p["title"] for p in known_products}:
+            known_products.append({"title": title, "hints": ""})
+            save_products(known_products)
+            print(f"  -> nieuwe titel toegevoegd aan products.json")
 
         new_last_id = pid
         posted += 1
