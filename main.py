@@ -179,8 +179,30 @@ def get_posts(uid: str, containerid: str, page: int = 1):
     data = weibo_api(
         {"type": "uid", "value": uid, "containerid": containerid, "page": page}
     )
-    cards = data.get("data", {}).get("cards", [])
-    return [c["mblog"] for c in cards if c.get("card_type") == 9 and "mblog" in c]
+    payload = data.get("data", {}) or {}
+    cards = payload.get("cards", [])
+    posts = [c["mblog"] for c in cards if c.get("card_type") == 9 and "mblog" in c]
+
+    if not posts:
+        # Laat zien wat Weibo wél terugstuurde, zodat duidelijk is of het om
+        # een login-muur gaat of om iets anders.
+        print("  Diagnose: geen posts in het antwoord.")
+        print(f"  - sleutels in data: {sorted(payload.keys())}")
+        print(f"  - aantal cards: {len(cards)}")
+        if cards:
+            types = sorted({c.get("card_type") for c in cards})
+            print(f"  - card_types gevonden: {types}")
+        info = payload.get("cardlistInfo") or {}
+        if info:
+            print(f"  - cardlistInfo total: {info.get('total')}")
+        if not payload.get("userInfo") and not payload.get("tabsInfo"):
+            print("  - Geen userInfo/tabsInfo: Weibo behandelt ons als "
+                  "uitgelogde bezoeker. Zet de WEIBO_COOKIE secret (README).")
+        else:
+            print("  - Profielgegevens zijn er wel; het account heeft mogelijk "
+                  "geen publieke posts op deze pagina.")
+
+    return posts
 
 
 def get_full_text(mblog: dict) -> str:
