@@ -12,6 +12,10 @@ De vertaalde tekst van de Weibo-post.
 
 Met daaronder alle foto's en (indien aanwezig) de video als bijlage.
 
+De vertaalde tekst bevat nooit emoji, ook niet als de originele Weibo-post er
+vol mee staat. Dat wordt zowel in de instructie aan Claude afgedwongen als
+achteraf nog eens in de code weggefilterd.
+
 ## Hoe het werkt
 
 1. GitHub Actions draait elke 10 minuten.
@@ -22,19 +26,40 @@ Met daaronder alle foto's en (indien aanwezig) de video als bijlage.
 5. Alles wordt als een bericht met bijlagen naar de Discord webhook gestuurd.
 6. `state.json` en `products.json` worden teruggecommit naar de repo.
 
-### Producttitels consistent houden
+### Producttitels en merkherkenning
 
-`products.json` bevat alle titels die eerder gebruikt zijn. Die lijst wordt
-meegestuurd in elke API-call, met de instructie om een bestaande titel te
-hergebruiken als het om hetzelfde product gaat. Zo wordt dezelfde jas niet de
-ene keer "CANADA GOOSE JACKETS" en de andere keer "CANADA GOOSE DOWN JACKET".
+`products.json` is de catalogus van producten waar 718 Made over post. Per
+product staat er een titel en een veld `hints` met details waaraan het product
+te herkennen is. Die catalogus gaat mee in elke API-call.
 
-Nieuwe producten worden automatisch aan de lijst toegevoegd. Wil je een titel
-corrigeren, pas dan gewoon `products.json` in de repo aan — de bot gebruikt
-vanaf dat moment jouw versie.
+Dit is belangrijk omdat de Weibo-posts het merk vaak niet noemen. Een post over
+"de 1300g heavyweight sweatshirt" bevat nergens het woord Balenciaga; alleen
+via de hints weet de bot om welk product het gaat.
 
-Kan Claude echt niet bepalen om welk product het gaat (bijvoorbeeld bij een
-algemene aankondiging), dan wordt de titel `718 MADE`.
+```json
+{
+  "products": [
+    {
+      "title": "BALENCIAGA HEAVYWEIGHT SWEATSHIRT",
+      "hints": "1300g heavyweight sweatshirt, 重磅卫衣, grijs en washed, oversized"
+    }
+  ]
+}
+```
+
+Hoe voller de hints, hoe beter de herkenning. Zet er gerust Chinese termen in
+die in de posts voorkomen, kleurnamen, modelnamen, gewichten, constructie-
+details - alles waaraan jij het product zou herkennen.
+
+Is het merk niet af te leiden, dan gebruikt de bot alleen het producttype
+("HEAVYWEIGHT SWEATSHIRT"). Hij verzint nooit een merk en gebruikt 718 Made
+nooit als merknaam. Alleen bij posts die helemaal niet over een product gaan
+(aankondiging, vakantiemelding) wordt de titel `718 MADE`.
+
+Nieuwe producten worden automatisch toegevoegd met een leeg `hints`-veld. Vul
+die zelf aan zodra je ziet dat een titel terugkomt - dat maakt de herkenning
+voor volgende posts meteen beter. Klopt een titel niet, pas 'm dan gewoon aan
+in `products.json`.
 
 ## Setup
 
