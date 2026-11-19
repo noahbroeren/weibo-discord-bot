@@ -1,0 +1,52 @@
+name: Fetch product photos
+
+# Haalt alle foto's van een product op en zet ze als zip bij de run
+# (Artifacts). Post niets naar Discord en past state.json niet aan.
+
+on:
+  push:
+    branches: [claude/ecstatic-mendel-ifdi9w]
+    paths:
+      - fetch_photos.py
+      - .github/workflows/fetch-photos.yml
+  workflow_dispatch:
+    inputs:
+      keywords:
+        description: "Zoekwoorden in de post, gescheiden door komma's"
+        required: true
+        default: "老鹰"
+      since:
+        description: "Hoe ver terug (JJJJ-MM-DD)"
+        required: true
+        default: "2026-03-01"
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch photos
+        env:
+          WEIBO_UID: "5780980302"
+          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          KEYWORDS: ${{ inputs.keywords || '老鹰' }}
+          SINCE: ${{ inputs.since || '2026-03-01' }}
+          OUT_DIR: photos
+        run: python -u fetch_photos.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: product-photos
+          path: photos/
+          if-no-files-found: error
