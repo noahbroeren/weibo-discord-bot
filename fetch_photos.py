@@ -53,29 +53,64 @@ def all_image_urls(mblog: dict):
 
 def find_matching_posts(uid: str, keywords, since: datetime):
     containerid = bot.get_container_id(uid)
-    print(f"Containerid: {containerid}")
+
+    # Weibo bladert niet altijd op dezelfde manier. We proberen de feeds in
+    # deze volgorde, tot er een ver genoeg terug gaat.
+    feeds = [
+        (containerid, "since_id"),
+        (containerid, "page"),
+        (f"230413{uid}_-_WEIBO_SECOND_PROFILE_WEIBO", "page"),
+    ]
 
     matches = []
     seen = set()
+
+    for feed_cid, paging in feeds:
+        print(f"Feed {feed_cid}, bladeren via {paging}")
+        if scan_feed(uid, feed_cid, paging, keywords, since, seen, matches):
+            break
+        print("  Deze feed ging niet ver genoeg terug; volgende proberen.")
+
+    return [m for m in matches if m["date"] >= since.strftime("%Y-%m-%d")]
+
+
+def scan_feed(uid, containerid, paging, keywords, since, seen, matches):
+    """Geeft True terug als de feed tot voorbij `since` terugging."""
     since_id = None
+    feed_seen = set()
 
     for page in range(1, MAX_PAGES + 1):
         params = {"type": "uid", "value": uid, "containerid": containerid}
-        if since_id:
+        if paging == "since_id" and since_id:
             params["since_id"] = since_id
-        else:
+        elif page > 1 or paging == "page":
             params["page"] = page
-        payload = bot.weibo_api(params).get("data") or {}
+        try:
+            payload = bot.weibo_api(params).get("data") or {}
+        except RuntimeError as e:
+            print(f"  Pagina {page}: {e}")
+            return False
         cards = payload.get("cards") or []
+        # De tweede profielfeed verpakt posts in card_group's.
+        for card in list(cards):
+            cards.extend(card.get("card_group") or [])
         posts = [c["mblog"] for c in cards if c.get("card_type") == 9 and "mblog" in c]
         if not posts:
-            print(f"Pagina {page}: geen posts meer.")
-            break
+            print(f"  Pagina {page}: geen posts meer.")
+            return False
 
-        new = [p for p in posts if p["id"] not in seen]
+        # feed_seen: om te merken dat Weibo dezelfde pagina blijft geven.
+        # seen: om posts die een eerdere feed al had niet dubbel te pakken.
+        new = [p for p in posts if p["id"] not in feed_seen]
+        feed_seen.update(p["id"] for p in posts)
         for post in new:
+            if post["id"] in seen:
+                continue
             seen.add(post["id"])
             text = bot.clean_text(bot.get_full_text(post))
+            print(f"    {created(post):%Y-%m-%d} {post['id']}"
+                  f"{' (vastgepind)' if post.get('isTop') else ''}: "
+                  f"{text[:30]!r}")
             if any(k.lower() in text.lower() for k in keywords):
                 urls = all_image_urls(post)
                 matches.append({
@@ -85,22 +120,23 @@ def find_matching_posts(uid: str, keywords, since: datetime):
                     "text": text,
                     "images": urls,
                 })
-                print(f"  match {matches[-1]['date']} {post['id']}: "
-                      f"{len(urls)} foto's")
+                print(f"    ^ match, {len(urls)} foto's")
 
         # Vastgepinde posts staan bovenaan ongeacht hun datum; die tellen
         # niet mee voor de vraag of we ver genoeg terug zijn.
-        dated = [created(p) for p in new if not p.get("isTop")]
+        dated = [created(p) for p in posts if not p.get("isTop")]
         oldest = min(dated) if dated else None
-        print(f"Pagina {page}: {len(posts)} posts"
+        print(f"  Pagina {page}: {len(posts)} posts ({len(new)} nieuw)"
               + (f", oudste {oldest:%Y-%m-%d}" if oldest else ""))
-        if not new or (oldest and oldest < since):
-            break
+        if oldest and oldest < since:
+            return True
+        if not new:
+            return False
 
         since_id = (payload.get("cardlistInfo") or {}).get("since_id")
         time.sleep(1.5)
 
-    return [m for m in matches if m["date"] >= since.strftime("%Y-%m-%d")]
+    return True
 
 
 def main():
